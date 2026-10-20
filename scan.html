@@ -11,7 +11,7 @@
 <script>
   // 1) Alamat web app Apps Script Anda (yang berakhiran /exec, BUKAN /dev). Contoh:
   //    https://script.google.com/macros/s/AKfycbx.../exec
-  var URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbyIiKuP1XgXwXggtFPeZcvwZ3cyPrSPi4wMj-1goZh9JMMtLr1Eeihh3UNnb9lLd_8APQ/exec';
+  var URL_APPS_SCRIPT = 'GANTI_DENGAN_ALAMAT_EXEC';
 
   // 2) Kode rahasia. HARUS SAMA PERSIS dengan SCAN_KODE_RAHASIA di Code.gs.
   //    (Sudah terisi. Kalau Anda ingin menggantinya, ganti di kedua tempat.)
@@ -125,7 +125,16 @@
   'use strict';
 
   // ---------------------------------------------------------------- konstanta
+  // Pembaca barcode UTAMA: zxing-wasm (zxing-cpp versi WebAssembly) - jauh lebih andal pada gambar webcam sungguhan
+  // (buram, kecil, miring, silau) daripada pembaca JavaScript murni. Berkas .wasm (~1 MB) dimuat dari jsDelivr saat pertama dipakai.
+  var WASM_JS_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.4/dist/iife/reader/index.js';
+  // Pembaca CADANGAN (lebih lemah): dipakai hanya kalau WebAssembly gagal dimuat.
   var ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+  var OPSI_WASM = { formats: ['Code128'], tryHarder: true, tryRotate: true, tryInvert: false, tryDownscale: true,
+                    minLineCount: 1, maxNumberOfSymbols: 1 };   // minLineCount 1: barcode kecil/buram tetap terbaca (checksum Code128 mencegah salah baca)
+  var LEBAR_BACA_MAKS = 1920;       // frame lebih lebar dari ini diperkecil; JANGAN lebih kecil (piksel barcode jadi hilang)
+  var PETUNJUK_AWAL = 'Arahkan barcode kartu ke kamera';
+  var PETUNJUK_BANTU_MS = 6000;     // kalau selama ini belum ada yang terbaca, tampilkan petunjuk cara memegang kartu
   var TERIMA_KASIH_MS = 2000;       // lama ucapan terima kasih
   var NOTIF_MS = 4000;              // lama notifikasi di pojok kanan atas
   var NOTIF_MAKS = 4;               // paling banyak yang tampil bersamaan
@@ -142,13 +151,15 @@
   var panggung = el('panggung'), video = el('video'), petunjuk = el('petunjuk'), inputUsb = el('inputUsb');
 
   // ---------------------------------------------------------------- diagnostik
-  var diag = { kamera: 'mati', kodeTerbaca: 0, kodeTerakhir: '-', jamTerakhir: '-', server: '-', riwayat: [], keydown: 0, masukan: 0, enter: 0 };
+  var diag = { kamera: 'mati', kodeTerbaca: 0, kodeTerakhir: '-', jamTerakhir: '-', server: '-', riwayat: [], keydown: 0, masukan: 0, enter: 0,
+               pembaca: '-', resolusi: '-', frame: 0, msDekode: 0, lewat: '-', galatBaca: 0 };
   function jamSekarang() { return new Date().toTimeString().slice(0, 8); }
   function perbaruiDiag() {
     if (el('diagWadah').hidden) return;
     el('diagTeks').textContent =
       'Kotak scan USB terfokus: ' + (document.activeElement === inputUsb ? 'ya' : 'TIDAK') + ' | Isi buffer: "' + inputUsb.value + '"\n' +
       'Keydown: ' + diag.keydown + ' | Masukan teks: ' + diag.masukan + ' | Enter: ' + diag.enter + ' | Kamera: ' + diag.kamera + '\n' +
+      'Pembaca barcode: ' + diag.pembaca + ' | Video: ' + diag.resolusi + ' | Frame dianalisis: ' + diag.frame + ' | Waktu baca: ' + diag.msDekode + ' ms | Terbaca lewat: ' + diag.lewat + ' | Galat baca: ' + diag.galatBaca + '\n' +
       'Alamat Apps Script: ' + (sudahDiisi() ? URL_APPS_SCRIPT.slice(0, 60) + (URL_APPS_SCRIPT.length > 60 ? '...' : '') : 'BELUM DIISI') + '\n' +
       'Kode terbaca: ' + diag.kodeTerbaca + ' | Terakhir: ' + diag.kodeTerakhir + ' (' + diag.jamTerakhir + ') | Server: ' + diag.server +
       (diag.riwayat.length ? '\n\nRiwayat scan (terbaru di atas):\n' + diag.riwayat.map(function (r) { return '  ' + r.jam + '  ' + r.kode + '  ->  ' + r.hasil; }).join('\n') : '');
@@ -338,10 +349,19 @@
   document.addEventListener('focusout', function (e) { if (e.target === inputUsb) setTimeout(function () { fokusUsb(); }, 200); });
   panggung.addEventListener('click', function (e) { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'OPTION') fokusUsb(); });
   window.addEventListener('focus', fokusUsb);
-  setInterval(function () { perbaruiIndikator(); perbaruiDiag(); }, 1000);
+  setInterval(function () {
+    perbaruiIndikator(); perbaruiDiag();
+    // Kamera aktif tapi sudah lama tidak ada yang terbaca: beri petunjuk cara memegang kartu
+    if (panggung.getAttribute('data-kamera') === 'aktif' && diag.frame > 0 && petunjuk.textContent !== 'Menyiapkan pembaca barcode...') {
+      var sejak = Date.now() - Math.max(waktuBaca, waktuMulaiKamera);
+      var bantu = sejak > PETUNJUK_BANTU_MS;
+      var teks = bantu ? 'Belum terbaca. Dekatkan kartu sampai barcode memenuhi sekitar sepertiga lebar gambar, pegang tegak lurus (barcode mendatar), dan hindari silau.' : PETUNJUK_AWAL;
+      if (petunjuk.textContent !== teks) petunjuk.textContent = teks;
+    }
+  }, 1000);
 
   // ---------------------------------------------------------------- kamera (webcam)
-  var timerBaca = null, tokenKamera = 0, kodeKameraTerakhir = '', kameraWaktuLihat = 0, pustakaPromise = null;
+  var timerBaca = null, tokenKamera = 0, kodeKameraTerakhir = '', kameraWaktuLihat = 0, pustakaPromise = null, waktuBaca = 0, waktuMulaiKamera = 0;
 
   function setKamera(status, teks) {
     panggung.setAttribute('data-kamera', status);
@@ -349,15 +369,25 @@
     diag.kamera = status + (status === 'error' ? ': ' + teks : '');
     perbaruiDiag();
   }
-  function muatZXing() {
-    if (window.ZXing) return Promise.resolve();
-    if (pustakaPromise) return pustakaPromise;
-    pustakaPromise = new Promise(function (selesai, gagal) {
-      var s = document.createElement('script'); s.src = ZXING_URL;
-      s.onload = function () { window.ZXing ? selesai() : gagal(new Error('PUSTAKA')); };
-      s.onerror = function () { pustakaPromise = null; gagal(new Error('PUSTAKA')); };
+  function muatSkrip(url, sudahAda) {
+    return new Promise(function (selesai, gagal) {
+      var s = document.createElement('script'); s.src = url;
+      s.onload = function () { sudahAda() ? selesai() : gagal(new Error('PUSTAKA')); };
+      s.onerror = function () { gagal(new Error('PUSTAKA')); };
       document.head.appendChild(s);
     });
+  }
+  // Muat pembaca utama (zxing-wasm); kalau gagal, jatuh ke pembaca cadangan (ZXing-js). Jenis yang dipakai dicatat di diag.pembaca.
+  function muatPembaca() {
+    if (pustakaPromise) return pustakaPromise;
+    pustakaPromise = muatSkrip(WASM_JS_URL, function () { return !!window.ZXingWASM; })
+      .then(function () { return window.ZXingWASM.prepareZXingModule({ fireImmediately: true }); })   // memuat .wasm SEKARANG, supaya kegagalan ketahuan di awal
+      .then(function () { diag.pembaca = 'zxing-wasm 3.1.4'; })
+      .catch(function () {
+        return muatSkrip(ZXING_URL, function () { return !!window.ZXing; })
+          .then(function () { diag.pembaca = 'ZXing-js (CADANGAN, lebih lemah: WebAssembly gagal dimuat)'; });
+      });
+    pustakaPromise.catch(function () { pustakaPromise = null; });   // supaya "Coba lagi" boleh memuat ulang
     return pustakaPromise;
   }
   function pesanKamera(e) {
@@ -380,7 +410,7 @@
   function bacaPilihan() { try { return localStorage.getItem('kameraPilihan') || ''; } catch (e) { return ''; } }
   function simpanPilihan(id) { try { if (id) localStorage.setItem('kameraPilihan', id); else localStorage.removeItem('kameraPilihan'); } catch (e) {} }
   function batasan(deviceId) {
-    var v = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    var v = { width: { ideal: 1920 }, height: { ideal: 1080 } };   // makin banyak piksel, makin mudah barcode kecil terbaca (kamera yang tak sanggup otomatis turun)
     if (deviceId) v.deviceId = { exact: deviceId }; else v.facingMode = { ideal: 'environment' };
     return { video: v };
   }
@@ -400,25 +430,77 @@
     terimaKode(kode);
   }
 
-  // Frame video digambar ke kanvas sendiri lalu dibaca ZXing (cara ini terbukti andal; mode "continuous" bawaan pustaka tidak)
+  // ---- alat gambar untuk putaran bantuan ----
+  function salinKanvas(sumber, skala, sx, sy, sw, sh) {
+    var c = document.createElement('canvas'); c.width = Math.max(1, Math.round(sw * skala)); c.height = Math.max(1, Math.round(sh * skala));
+    var x = c.getContext('2d', { willReadFrequently: true }); x.imageSmoothingEnabled = true; x.imageSmoothingQuality = 'high';
+    x.drawImage(sumber, sx, sy, sw, sh, 0, 0, c.width, c.height); return c;
+  }
+  function putarKanvas(sumber, derajat) {
+    var r = derajat * Math.PI / 180, w = sumber.width, h = sumber.height;
+    var c = document.createElement('canvas');
+    c.width = Math.round(Math.abs(w * Math.cos(r)) + Math.abs(h * Math.sin(r))); c.height = Math.round(Math.abs(w * Math.sin(r)) + Math.abs(h * Math.cos(r)));
+    var x = c.getContext('2d', { willReadFrequently: true }); x.fillStyle = '#888'; x.fillRect(0, 0, c.width, c.height);
+    x.translate(c.width / 2, c.height / 2); x.rotate(r); x.drawImage(sumber, -w / 2, -h / 2); return c;
+  }
+  // Putaran BANTUAN, satu per siklus bergiliran, hanya bila pembacaan biasa belum berhasil: bagian tengah diperbesar (barcode kecil)
+  // dan gambar diputar sedikit (kartu dipegang miring; pembaca 1D hanya andal sampai ~15 derajat).
+  var EKSTRA = [
+    { nama: 'tengah x2', siapkan: function (c) { return salinKanvas(c, 2, c.width * 0.15, c.height * 0.15, c.width * 0.7, c.height * 0.7); } },
+    { nama: 'putar +15', siapkan: function (c) { return putarKanvas(c, 15); } },
+    { nama: 'putar -15', siapkan: function (c) { return putarKanvas(c, -15); } },
+    { nama: 'putar +30', siapkan: function (c) { return putarKanvas(c, 30); } },
+    { nama: 'putar -30', siapkan: function (c) { return putarKanvas(c, -30); } }
+  ];
+
+  function bacaWasm(kanvas) {
+    var d = kanvas.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, kanvas.width, kanvas.height);
+    return window.ZXingWASM.readBarcodes(d, OPSI_WASM).then(function (hasil) {
+      for (var i = 0; i < hasil.length; i++) if (hasil[i].isValid !== false && hasil[i].text) return hasil[i].text;
+      return null;
+    });
+  }
+  function bacaZxingJs(kanvas, pembaca) {
+    try {
+      var bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(kanvas)));
+      return Promise.resolve(pembaca.decode(bitmap).getText());
+    } catch (e) { return Promise.resolve(null); }
+  }
+
+  // Frame video digambar ke kanvas sendiri lalu dibaca. (Mode "continuous" bawaan ZXing-js tidak dipakai: terbukti tidak andal.)
   function mulaiBaca(token) {
     var kanvas = document.createElement('canvas'), ctx = kanvas.getContext('2d', { willReadFrequently: true });
-    var hint = new Map();
-    hint.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.CODE_128]);   // kartu memakai Code128
-    hint.set(ZXing.DecodeHintType.TRY_HARDER, true);
-    var pembaca = new ZXing.MultiFormatReader(); pembaca.setHints(hint);
+    var pakaiWasm = !!window.ZXingWASM && diag.pembaca.indexOf('zxing-wasm') === 0, pembacaJs = null, siklus = 0;
+    if (!pakaiWasm) {
+      var hint = new Map();
+      hint.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.CODE_128]); hint.set(ZXing.DecodeHintType.TRY_HARDER, true);
+      pembacaJs = new ZXing.MultiFormatReader(); pembacaJs.setHints(hint);
+    }
     (function putaran() {
       if (token !== tokenKamera) return;
+      var mulai = performance.now(), kerja = Promise.resolve();
       if (!document.hidden && video.readyState >= 2 && video.videoWidth > 0) {
-        var w = Math.min(video.videoWidth, 1280), h = Math.round(video.videoHeight * w / video.videoWidth);
+        var w = Math.min(video.videoWidth, LEBAR_BACA_MAKS), h = Math.round(video.videoHeight * w / video.videoWidth);
         if (kanvas.width !== w || kanvas.height !== h) { kanvas.width = w; kanvas.height = h; }
         ctx.drawImage(video, 0, 0, w, h);
-        try {
-          var bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(kanvas)));
-          terimaDariKamera(pembaca.decode(bitmap).getText());
-        } catch (e) { /* tidak ada barcode pada frame ini: wajar */ }
+        diag.frame++; diag.resolusi = video.videoWidth + '×' + video.videoHeight;
+        if (pakaiWasm) {
+          kerja = bacaWasm(kanvas).then(function (teks) {
+            if (teks) return { teks: teks, lewat: 'dasar' };
+            var e = EKSTRA[siklus++ % EKSTRA.length];
+            return bacaWasm(e.siapkan(kanvas)).then(function (t2) { return t2 ? { teks: t2, lewat: e.nama } : null; });
+          });
+        } else {
+          kerja = bacaZxingJs(kanvas, pembacaJs).then(function (teks) { return teks ? { teks: teks, lewat: 'dasar (ZXing-js)' } : null; });
+        }
+        kerja = kerja.then(function (r) { if (r) { diag.lewat = r.lewat; waktuBaca = Date.now(); terimaDariKamera(r.teks); } });
       }
-      timerBaca = setTimeout(putaran, KAMERA_JEDA_BACA_MS);
+      kerja.catch(function () { diag.galatBaca++; }).then(function () {
+        diag.msDekode = Math.round(performance.now() - mulai);
+        if (token !== tokenKamera) return;
+        // jangan membebani PC yang lemah: jeda disesuaikan dengan lama satu putaran baca
+        timerBaca = setTimeout(putaran, Math.max(KAMERA_JEDA_BACA_MS, Math.min(diag.msDekode, 1000)));
+      });
     })();
   }
 
@@ -459,7 +541,7 @@
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { gagal(new Error('TANPA_KAMERA_API')); return; }
     if (dilarangKebijakan()) { gagal(new Error('KEBIJAKAN')); return; }
 
-    var janjiPustaka = muatZXing(); janjiPustaka.catch(function () {});   // dimuat paralel; kamera diminta langsung
+    var janjiPembaca = muatPembaca(); janjiPembaca.catch(function () {});   // dimuat paralel; kamera diminta LANGSUNG
     var pilihan = bacaPilihan();
     navigator.mediaDevices.getUserMedia(batasan(pilihan)).catch(function (e1) {
       if (pilihan && (e1.name === 'OverconstrainedError' || e1.name === 'NotFoundError')) { simpanPilihan(''); return navigator.mediaDevices.getUserMedia(batasan('')); }
@@ -467,15 +549,18 @@
     }).then(function (s) {
       aliran = s;
       if (token !== tokenKamera) { s.getTracks().forEach(function (t) { t.stop(); }); aliran = null; return null; }
-      return janjiPustaka;
-    }).then(function () {
-      if (token !== tokenKamera || !aliran) return null;
       video.srcObject = aliran;
       return video.play();
     }).then(function () {
+      if (token !== tokenKamera || !aliran) return null;
+      waktuMulaiKamera = Date.now(); waktuBaca = 0;
+      setKamera('aktif', 'Menyiapkan pembaca barcode...');   // gambar kamera sudah tampil; pembaca (berkas .wasm ~1 MB) bisa butuh beberapa detik pertama kali
+      isiDaftarKamera(aliran);
+      return janjiPembaca;
+    }).then(function () {
       if (token !== tokenKamera || !aliran) return;
-      setKamera('aktif', 'Arahkan barcode kartu ke kamera');
-      isiDaftarKamera(aliran); aliran = null;     // sudah dipegang elemen video
+      aliran = null;                                          // sudah dipegang elemen video
+      petunjuk.textContent = PETUNJUK_AWAL;
       mulaiBaca(token);
     }).catch(gagal);
   }
