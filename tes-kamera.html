@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tes Kamera</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; color: #26302C; background: #F7F3EA; }
+    h1 { font-size: 1.4rem; margin-bottom: 4px; }
+    p.kecil { color: #6b6357; font-size: 0.9rem; margin-top: 0; }
+    button { font-size: 1rem; padding: 10px 20px; border-radius: 999px; border: 1.5px solid #3B2A1E; background: #3B2A1E; color: #fff; font-weight: 600; cursor: pointer; }
+    button.sekunder { background: transparent; color: #3B2A1E; }
+    button:disabled { opacity: 0.4; cursor: default; }
+    #status { margin: 16px 0 10px; font-weight: 600; min-height: 1.5em; }
+    #status.ok { color: #2F6B45; }
+    #status.gagal { color: #8C3B34; }
+    video { width: 100%; max-width: 640px; aspect-ratio: 4 / 3; background: #111; border-radius: 12px; object-fit: cover; display: block; }
+    pre { background: #ffffff; border: 1px solid #D9CEB0; border-radius: 8px; padding: 12px; font-size: 0.8rem; white-space: pre-wrap; }
+  </style>
+</head>
+<body>
+  <h1>Tes Kamera</h1>
+  <p class="kecil">Halaman uji untuk memastikan hosting dan kamera berfungsi. Gambar kamera hanya tampil di layar ini, tidak disimpan dan tidak dikirim ke mana pun.</p>
+
+  <button id="nyalakan">Nyalakan kamera</button>
+  <button id="matikan" class="sekunder" disabled>Matikan kamera</button>
+
+  <p id="status">Belum dicoba. Klik "Nyalakan kamera".</p>
+  <video id="video" playsinline muted autoplay></video>
+  <pre id="info"></pre>
+
+  <script>
+  (function () {
+    // Dibungkus fungsi agar nama-nama di bawah tidak bentrok dengan properti bawaan browser (mis. window.status)
+    var video = document.getElementById('video');
+    var elStatus = document.getElementById('status');
+    var tombolNyala = document.getElementById('nyalakan');
+    var tombolMati = document.getElementById('matikan');
+    var aliran = null;
+
+    function setStatus(teks, kelas) { elStatus.textContent = teks; elStatus.className = kelas || ''; }
+
+    function kebijakanKamera() {
+      var k = document.permissionsPolicy || document.featurePolicy;
+      if (!k || typeof k.allowsFeature !== 'function') return 'tidak diketahui';
+      return k.allowsFeature('camera') ? 'diizinkan' : 'DIBLOKIR';
+    }
+
+    document.getElementById('info').textContent =
+      'Alamat halaman      : ' + location.href + '\n' +
+      'Memakai HTTPS       : ' + (location.protocol === 'https:' ? 'ya' : 'TIDAK (kamera hanya jalan lewat HTTPS)') + '\n' +
+      'Konteks aman        : ' + (window.isSecureContext ? 'ya' : 'TIDAK') + '\n' +
+      'Halaman utama       : ' + (window.top === window ? 'ya (bukan di dalam bingkai)' : 'TIDAK (berada di dalam bingkai/iframe)') + '\n' +
+      'Kebijakan kamera    : ' + kebijakanKamera() + '\n' +
+      'Browser             : ' + navigator.userAgent;
+
+    function pesanGalat(e) {
+      var n = (e && e.name) || '';
+      if (n === 'NotAllowedError') return 'Izin kamera ditolak (atau diblokir). Klik ikon kamera/gembok di bilah alamat, pilih "Izinkan", lalu coba lagi.';
+      if (n === 'NotFoundError') return 'Kamera tidak ditemukan. Pastikan webcam terpasang.';
+      if (n === 'NotReadableError') return 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu lalu coba lagi.';
+      return 'Kamera gagal dinyalakan' + (n ? ' (' + n + ')' : '') + '.';
+    }
+
+    tombolNyala.addEventListener('click', function () {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setStatus('Browser ini tidak mengizinkan kamera di halaman ini (kamera butuh alamat HTTPS).', 'gagal');
+        return;
+      }
+      setStatus('Meminta izin kamera...');
+      navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 1280 }, height: { ideal: 720 } } })
+        .then(function (s) {
+          aliran = s;
+          video.srcObject = s;
+          return video.play();
+        })
+        .then(function () {
+          var t = aliran.getVideoTracks()[0];
+          var p = t.getSettings();
+          setStatus('✅ Kamera menyala: ' + (p.width || '?') + ' × ' + (p.height || '?') + ' (' + (t.label || 'kamera') + ')', 'ok');
+          tombolNyala.disabled = true;
+          tombolMati.disabled = false;
+        })
+        .catch(function (e) {
+          setStatus('❌ ' + pesanGalat(e), 'gagal');
+        });
+    });
+
+    tombolMati.addEventListener('click', function () {
+      if (aliran) { aliran.getTracks().forEach(function (t) { t.stop(); }); aliran = null; }
+      video.srcObject = null;
+      setStatus('Kamera dimatikan.');
+      tombolNyala.disabled = false;
+      tombolMati.disabled = true;
+    });
+  })();
+  </script>
+</body>
+</html>
