@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scan Kunjungan - Perpustakaan SMPIT Thariq Bin Ziyad</title>
+
+<!-- ======================================================================= -->
+<!-- PENGATURAN: yang perlu Anda isi/periksa hanya DUA baris di bawah ini.    -->
+<!-- ======================================================================= -->
+<script>
+  // 1) Alamat web app Apps Script Anda (yang berakhiran /exec, BUKAN /dev). Contoh:
+  //    https://script.google.com/macros/s/AKfycbx.../exec
+  var URL_APPS_SCRIPT = 'https://script.google.com/macros/s/AKfycbyIiKuP1XgXwXggtFPeZcvwZ3cyPrSPi4wMj-1goZh9JMMtLr1Eeihh3UNnb9lLd_8APQ/exec';
+
+  // 2) Kode rahasia. HARUS SAMA PERSIS dengan SCAN_KODE_RAHASIA di Code.gs.
+  //    (Sudah terisi. Kalau Anda ingin menggantinya, ganti di kedua tempat.)
+  var KODE_RAHASIA = 'W-0zRnCTzcZMlN8Fm_ahExgZ';
+</script>
+
+<style>
+  :root { --ink:#3B2A1E; --ink-2:#4A3728; --paper:#F7F3EA; --brass:#A6772C; --brick:#8C3B34; --line:#D9CEB0; --text:#26302C; --muted:#6b6357; --hijau:#3F6E52; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--paper); color: var(--text);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .judul { font-family: Georgia, "Times New Roman", serif; font-weight: 600; margin: 0; line-height: 1.3; }
+
+  #panggung { position: relative; min-height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; padding: 56px 20px 32px; }
+  .indikator { position: absolute; top: 14px; left: 18px; display: flex; align-items: center; gap: 8px; font-size: .82rem; color: var(--muted); }
+  .titik { width: 10px; height: 10px; border-radius: 50%; background: var(--hijau); }
+  #panggung.nonaktif .titik { background: var(--brick); }
+  #panggung.nonaktif .indikator { color: var(--brick); font-weight: 600; }
+  .alat { position: absolute; top: 8px; right: 12px; display: flex; gap: 2px; }
+  .alat button { background: none; border: 0; color: var(--muted); opacity: .5; font-size: 1.05rem; padding: 6px 9px; cursor: pointer; border-radius: 8px; }
+  .alat button:hover { opacity: 1; }
+  .alat button.masalah { color: var(--brick); opacity: 1; }
+  .alat button.mati { opacity: .3; }
+
+  .peringatan { background: #FBF2DF; border: 1.5px solid var(--brass); color: var(--ink); border-radius: 12px; padding: 12px 16px;
+    max-width: 640px; margin-bottom: 18px; font-size: .95rem; text-align: left; }
+
+  .tampil-siap { width: 100%; }
+  #panggung h1.judul { font-size: clamp(1.5rem, 3.6vw, 2.4rem); margin-bottom: 18px; }
+
+  .area-kamera { margin-top: 6px; }
+  .bingkai { position: relative; width: min(640px, 92%); aspect-ratio: 4 / 3; margin: 0 auto 12px; border-radius: 16px; overflow: hidden;
+    background: #111; box-shadow: 0 6px 22px rgba(0,0,0,.25); display: none; }
+  #panggung[data-kamera="aktif"] .bingkai, #panggung[data-kamera="memuat"] .bingkai { display: block; }
+  .bingkai video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .garis { position: absolute; left: 8%; right: 8%; top: 50%; height: 2px; background: rgba(214,60,50,.85); box-shadow: 0 0 8px rgba(214,60,50,.7); }
+  .petunjuk { font-size: 1.05rem; margin: 0 auto 12px; max-width: 640px; }
+  #panggung[data-kamera="error"] .petunjuk { color: var(--brick); font-weight: 600; }
+  .baris-tombol { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; align-items: center; }
+  .btn { background: var(--ink); color: #fff; border: 1.5px solid var(--ink); border-radius: 999px; padding: 10px 24px; font-weight: 600; font-size: 1rem; cursor: pointer; }
+  .btn:hover { background: var(--ink-2); }
+  .btn.sekunder { background: transparent; color: var(--ink); }
+  .btn.sekunder:hover { background: rgba(59,42,30,.08); }
+  #btnNyala, #btnMati { display: none; }
+  #panggung[data-kamera="mati"] #btnNyala, #panggung[data-kamera="error"] #btnNyala { display: inline-block; }
+  #panggung[data-kamera="aktif"] #btnMati { display: inline-block; }
+  #pilihKamera { padding: 9px 12px; border-radius: 999px; border: 1.5px solid var(--ink); background: #fff; color: var(--ink); font-size: .9rem; max-width: 260px; }
+
+  /* Ucapan terima kasih: menutupi layar 2 detik; kamera tetap berjalan di belakangnya */
+  .tampil-terima-kasih { position: absolute; inset: 0; z-index: 5; display: none; align-items: center; justify-content: center; padding: 24px;
+    background: #E7F3EA; }
+  .tampil-terima-kasih .judul { max-width: 900px; font-size: clamp(1.6rem, 4.2vw, 2.8rem); margin: 0; }
+  #panggung[data-state="terima-kasih"] .tampil-terima-kasih { display: flex; }
+
+  .input-tersembunyi { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; border: 0; padding: 0; }
+
+  #diagWadah { position: absolute; left: 16px; right: 16px; bottom: 12px; text-align: left; background: rgba(0,0,0,.05); border-radius: 10px; padding: 10px 14px; z-index: 6; }
+  #diagTeks { margin: 0 0 8px; font: .72rem/1.55 ui-monospace, Menlo, Consolas, monospace; color: #5C5448; white-space: pre-wrap; }
+  #diagWadah .btn { padding: 5px 14px; font-size: .8rem; }
+  #hasilPing { font-size: .8rem; margin-left: 8px; }
+
+  #toasts { position: fixed; top: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+  .toast { min-width: 260px; max-width: 360px; padding: 12px 16px; border-radius: 10px; font-size: .92rem; box-shadow: 0 6px 18px rgba(0,0,0,.2);
+    color: #fff; background: #198754; animation: masuk .35s ease; transition: opacity .3s ease; }
+  .toast.duplikat { background: #ffc107; color: #26302C; }
+  .toast.menghilang { opacity: 0; }
+  @keyframes masuk { from { transform: translateX(110%); opacity: 0; } to { transform: none; opacity: 1; } }
+  @media (max-width: 576px) { #toasts { left: 12px; right: 12px; } .toast { max-width: none; } }
+</style>
+</head>
+<body>
+
+<div id="panggung" data-state="siap" data-kamera="mati">
+  <div class="indikator"><span class="titik"></span><span id="indikatorTeks">Siap scan</span></div>
+  <div class="alat">
+    <button id="btnBunyi" type="button" title="Bunyi bip saat scan">&#128266;</button>
+    <button id="btnDiag" type="button" title="Diagnostik (untuk petugas)">&#9432;</button>
+  </div>
+
+  <div id="peringatan" class="peringatan" hidden></div>
+
+  <div class="tampil-siap">
+    <h1 class="judul">Silakan scan kartu perpustakaan</h1>
+    <div class="area-kamera">
+      <div class="bingkai"><video id="video" playsinline muted autoplay></video><div class="garis"></div></div>
+      <p id="petunjuk" class="petunjuk"></p>
+      <div class="baris-tombol">
+        <button id="btnNyala" type="button" class="btn">Nyalakan Kamera</button>
+        <button id="btnMati" type="button" class="btn sekunder">Matikan Kamera</button>
+        <select id="pilihKamera" hidden aria-label="Pilih kamera"></select>
+      </div>
+    </div>
+  </div>
+
+  <div class="tampil-terima-kasih" aria-live="polite">
+    <h1 class="judul">Terima Kasih atas Kunjungannya ke Perpustakaan SMPIT Thariq Bin Ziyad</h1>
+  </div>
+
+  <input type="text" id="inputUsb" class="input-tersembunyi" autocomplete="off" autocapitalize="off" spellcheck="false" inputmode="none" aria-label="Scan kartu perpustakaan">
+
+  <div id="diagWadah" hidden>
+    <pre id="diagTeks"></pre>
+    <button id="btnPing" type="button" class="btn sekunder">Tes koneksi ke Apps Script</button><span id="hasilPing"></span>
+  </div>
+</div>
+<div id="toasts"></div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------------------------------------------------------- konstanta
+  var ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js';
+  var TERIMA_KASIH_MS = 2000;       // lama ucapan terima kasih
+  var NOTIF_MS = 4000;              // lama notifikasi di pojok kanan atas
+  var NOTIF_MAKS = 4;               // paling banyak yang tampil bersamaan
+  var KAMERA_KARTU_SAMA_MS = 2500;  // kartu yang MASIH di depan kamera tidak dibaca berulang
+  var KAMERA_JEDA_BACA_MS = 200;    // jarak antar percobaan membaca barcode dari gambar kamera
+  var PANJANG_MIN = 3;              // kode lebih pendek dari ini dianggap ketikan nyasar
+  var JEDA_KETIK_MS = 1500;         // jeda lebih lama = ketikan USB sebelumnya nyasar, dibuang
+  var AKHIRI_OTOMATIS_MS = 200;     // pemindai USB tanpa Enter: kode selesai bila tak ada masukan baru selama ini
+  var KECEPATAN_PEMINDAI_MS = 70;   // rata-rata jeda antar karakter pemindai (manusia > ~100 ms)
+  var PANJANG_AUTO_MIN = 6;         // syarat panjang kode untuk pengakhiran otomatis tanpa Enter
+  var BULAN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+
+  function el(id) { return document.getElementById(id); }
+  var panggung = el('panggung'), video = el('video'), petunjuk = el('petunjuk'), inputUsb = el('inputUsb');
+
+  // ---------------------------------------------------------------- diagnostik
+  var diag = { kamera: 'mati', kodeTerbaca: 0, kodeTerakhir: '-', jamTerakhir: '-', server: '-', riwayat: [], keydown: 0, masukan: 0, enter: 0 };
+  function jamSekarang() { return new Date().toTimeString().slice(0, 8); }
+  function perbaruiDiag() {
+    if (el('diagWadah').hidden) return;
+    el('diagTeks').textContent =
+      'Kotak scan USB terfokus: ' + (document.activeElement === inputUsb ? 'ya' : 'TIDAK') + ' | Isi buffer: "' + inputUsb.value + '"\n' +
+      'Keydown: ' + diag.keydown + ' | Masukan teks: ' + diag.masukan + ' | Enter: ' + diag.enter + ' | Kamera: ' + diag.kamera + '\n' +
+      'Alamat Apps Script: ' + (sudahDiisi() ? URL_APPS_SCRIPT.slice(0, 60) + (URL_APPS_SCRIPT.length > 60 ? '...' : '') : 'BELUM DIISI') + '\n' +
+      'Kode terbaca: ' + diag.kodeTerbaca + ' | Terakhir: ' + diag.kodeTerakhir + ' (' + diag.jamTerakhir + ') | Server: ' + diag.server +
+      (diag.riwayat.length ? '\n\nRiwayat scan (terbaru di atas):\n' + diag.riwayat.map(function (r) { return '  ' + r.jam + '  ' + r.kode + '  ->  ' + r.hasil; }).join('\n') : '');
+  }
+  el('btnDiag').addEventListener('click', function () {
+    var w = el('diagWadah'); w.hidden = !w.hidden; perbaruiDiag(); fokusUsb();
+  });
+  function tandaiMasalah(ada) {
+    var b = el('btnDiag'); b.classList.toggle('masalah', !!ada);
+    b.title = ada ? 'Ada scan yang TIDAK tercatat - klik untuk melihat sebabnya' : 'Diagnostik (untuk petugas)';
+  }
+
+  function sudahDiisi() { return !!URL_APPS_SCRIPT && URL_APPS_SCRIPT.indexOf('GANTI_DENGAN') === -1 && /^https:\/\//.test(URL_APPS_SCRIPT); }
+  if (!sudahDiisi()) {
+    var p = el('peringatan'); p.hidden = false;
+    p.textContent = 'Pengaturan belum lengkap: isi alamat Apps Script (yang berakhiran /exec) pada baris URL_APPS_SCRIPT di bagian atas file scan.html, lalu unggah ulang ke GitHub. Sebelum itu, scan tidak akan tercatat.';
+  }
+
+  // ---------------------------------------------------------------- bunyi
+  var bunyiAktif = true, audioCtx = null;
+  function bunyi() {
+    if (!bunyiAktif) return;
+    try {
+      var Ctx = window.AudioContext || window.webkitAudioContext; if (!Ctx) return;
+      if (!audioCtx) audioCtx = new Ctx();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      var t = audioCtx.currentTime, osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+      osc.type = 'sine'; osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.0001, t); gain.gain.exponentialRampToValueAtTime(0.12, t + 0.01); gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+      osc.connect(gain); gain.connect(audioCtx.destination); osc.start(t); osc.stop(t + 0.18);
+    } catch (e) { /* bunyi hanya pelengkap */ }
+  }
+  el('btnBunyi').addEventListener('click', function () {
+    bunyiAktif = !bunyiAktif;
+    this.classList.toggle('mati', !bunyiAktif);
+    this.innerHTML = bunyiAktif ? '&#128266;' : '&#128263;';
+    fokusUsb();
+  });
+
+  // ---------------------------------------------------------------- notifikasi pojok kanan atas
+  function formatWaktu(iso) {
+    var d = new Date(iso);
+    if (!iso || isNaN(d.getTime())) return '';
+    var dua = function (n) { return ('0' + n).slice(-2); };
+    return d.getDate() + ' ' + BULAN[d.getMonth()] + ' ' + d.getFullYear() + ' pukul ' + dua(d.getHours()) + '.' + dua(d.getMinutes());
+  }
+  function namaDanKelas(h) {
+    var kelas = h.kelas || '';
+    if (kelas && !h.isGuru && !/^kelas\b/i.test(kelas)) kelas = 'Kelas ' + kelas;
+    return (h.nama || '') + (kelas ? ' (' + kelas + ')' : '');
+  }
+  function notifikasi(jenis, pesan) {
+    var wadah = el('toasts');
+    var t = document.createElement('div');
+    t.className = 'toast' + (jenis === 'duplikat' ? ' duplikat' : '');
+    t.setAttribute('role', 'status');
+    t.textContent = pesan;                       // textContent: nama dari spreadsheet tidak pernah dianggap HTML
+    wadah.appendChild(t);
+    var daftar = wadah.querySelectorAll('.toast');
+    for (var n = 0; n < daftar.length - NOTIF_MAKS; n++) daftar[n].remove();
+    setTimeout(function () { t.classList.add('menghilang'); setTimeout(function () { t.remove(); }, 350); }, NOTIF_MS);
+  }
+  function tampilkanHasil(h) {
+    if (!h) return;
+    var waktu = formatWaktu(h.waktu);
+    if (h.status === 'tercatat') {
+      notifikasi('sukses', h.nama ? namaDanKelas(h) + ' tercatat sebagai pengunjung' + (waktu ? ' pada ' + waktu : '') : 'Kunjungan tercatat.');
+    } else if (h.status === 'duplikat') {
+      notifikasi('duplikat', h.nama ? namaDanKelas(h) + ' sudah tercatat sebagai pengunjung' + (waktu ? ' pada ' + waktu : '') : (h.pesan || 'Sudah tercatat.'));
+    }
+  }
+
+  // ---------------------------------------------------------------- ucapan terima kasih + kirim ke Apps Script
+  var timerKembali = null;
+  function terimaKasih() {
+    panggung.setAttribute('data-state', 'terima-kasih');
+    clearTimeout(timerKembali);
+    timerKembali = setTimeout(function () { panggung.setAttribute('data-state', 'siap'); }, TERIMA_KASIH_MS);
+  }
+
+  function penjelasan(status, pesan) {
+    if (status === 'tidak_ditemukan') return 'ID tidak ada di sheet anggota (isi barcode kartu berbeda dengan Nomor Induk?)';
+    if (status === 'duplikat') return 'sudah tercatat dalam 15 menit terakhir (wajar, tidak dicatat ulang)';
+    if (status === 'ditolak') return 'kode rahasia tidak cocok: samakan KODE_RAHASIA di scan.html dengan SCAN_KODE_RAHASIA di Code.gs';
+    if (status === 'kosong') return 'kode kosong/tidak valid';
+    return pesan || status;
+  }
+
+  // Kirim di latar belakang: tanpa loading, tanpa pesan error di layar siswa.
+  // JSON dikirim sebagai text/plain: tipe application/json akan memicu "preflight" CORS yang ditolak Apps Script.
+  function kirim(kode) {
+    var entri = { jam: jamSekarang(), kode: kode, hasil: 'mengirim...' };
+    diag.riwayat.unshift(entri); if (diag.riwayat.length > 5) diag.riwayat.pop();
+    diag.server = 'mengirim...';
+    function selesai(teks, bermasalah) { entri.hasil = teks; diag.server = teks; tandaiMasalah(bermasalah); perbaruiDiag(); }
+
+    if (!sudahDiisi()) { selesai('TIDAK TERCATAT: alamat Apps Script belum diisi di scan.html', true); return; }
+    fetch(URL_APPS_SCRIPT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ aksi: 'scan', kode: kode, kodeRahasia: KODE_RAHASIA }),
+      redirect: 'follow'
+    }).then(function (res) { return res.text(); }).then(function (teks) {
+      var h = null;
+      try { h = JSON.parse(teks); } catch (e) { h = null; }
+      if (!h) {
+        selesai('MASALAH: jawaban bukan JSON. Periksa alamat /exec dan pengaturan akses deployment ("Anyone").', true);
+        return;
+      }
+      if (h.sukses) { selesai('tercatat', false); }
+      else if (h.status === 'duplikat') { selesai(penjelasan(h.status, h.pesan), false); }
+      else { selesai('TIDAK TERCATAT: ' + penjelasan(h.status, h.pesan), true); }
+      tampilkanHasil(h);
+    }).catch(function (err) {
+      // Permintaan SUDAH terkirim; yang gagal adalah membaca jawabannya (CORS) atau koneksi putus. Tidak dikirim ulang
+      // supaya tidak tercatat ganda - cek sheet Buku_Tamu.
+      selesai('Jawaban tidak terbaca atau koneksi gagal (' + (err && err.message) + '). Cek sheet Buku_Tamu: kunjungan mungkin tetap tercatat.', true);
+    });
+  }
+
+  function terimaKode(kode) {
+    kode = String(kode || '').trim();
+    if (kode.length < PANJANG_MIN) { perbaruiDiag(); return; }
+    diag.kodeTerbaca++; diag.kodeTerakhir = kode; diag.jamTerakhir = jamSekarang();
+    bunyi();
+    terimaKasih();
+    kirim(kode);
+    perbaruiDiag();
+  }
+
+  // ---------------------------------------------------------------- pemindai barcode USB (mengetik ID lalu Enter)
+  var timerAkhiri = null, inputPertama = 0, inputTerakhir = 0, panjangLama = 0;
+  function siapKeyboard() { return document.activeElement === inputUsb; }
+  function perbaruiIndikator() {
+    var siap = siapKeyboard();
+    panggung.classList.toggle('nonaktif', !siap);
+    el('indikatorTeks').textContent = siap ? 'Siap scan' : 'Klik layar untuk mengaktifkan';
+  }
+  function fokusUsb() {
+    if (document.activeElement !== inputUsb) inputUsb.focus({ preventScroll: true });
+    perbaruiIndikator();
+  }
+  function selesaikanUsb() {
+    clearTimeout(timerAkhiri);
+    var kode = inputUsb.value; inputUsb.value = ''; panjangLama = 0;
+    terimaKode(kode);
+  }
+  function jadwalAkhiri() { clearTimeout(timerAkhiri); timerAkhiri = setTimeout(akhiriJikaPemindai, AKHIRI_OTOMATIS_MS); }
+  function akhiriJikaPemindai() {
+    var kode = inputUsb.value.trim();
+    if (kode.length >= PANJANG_AUTO_MIN) {
+      var rata = (inputTerakhir - inputPertama) / Math.max(1, kode.length - 1);
+      if (rata <= KECEPATAN_PEMINDAI_MS) { selesaikanUsb(); return; }   // secepat pemindai, bukan ketikan tangan
+    }
+    perbaruiDiag();
+  }
+  function catatMasukan() {
+    var sekarang = Date.now(); diag.masukan++;
+    if (panjangLama > 0 && sekarang - inputTerakhir > JEDA_KETIK_MS) { inputUsb.value = inputUsb.value.slice(panjangLama); inputPertama = sekarang; }
+    else if (panjangLama === 0) { inputPertama = sekarang; }
+    inputTerakhir = sekarang; panjangLama = inputUsb.value.length;
+    jadwalAkhiri(); perbaruiDiag();
+  }
+  document.addEventListener('keydown', function (e) {
+    diag.keydown++;
+    var t = e.target, diKotak = (t === inputUsb);
+    if (!diKotak) {
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var dikenali = (e.key && e.key.length === 1) || e.key === 'Enter' || e.key === 'Tab';
+      if (!dikenali) return;
+      e.preventDefault();                       // ketikan ini ditampung manual di bawah
+      inputUsb.focus({ preventScroll: true });
+    } else if (e.ctrlKey || e.metaKey || e.altKey) { return; }
+    if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); diag.enter++; selesaikanUsb(); return; }
+    if (!diKotak && e.key && e.key.length === 1) { inputUsb.value += e.key; catatMasukan(); }
+    perbaruiDiag();
+  }, true);
+  document.addEventListener('input', function (e) { if (e.target === inputUsb) catatMasukan(); });
+  function enterCadangan(e) {                   // Enter yang hanya berupa keypress/keyup; tak mungkin dobel (isi kotak sudah kosong)
+    if (e.target !== inputUsb || e.key !== 'Enter' || inputUsb.value.trim() === '') return;
+    e.preventDefault(); diag.enter++; selesaikanUsb();
+  }
+  document.addEventListener('keypress', enterCadangan, true);
+  document.addEventListener('keyup', enterCadangan, true);
+  document.addEventListener('focusin', function (e) { if (e.target === inputUsb) perbaruiIndikator(); });
+  document.addEventListener('focusout', function (e) { if (e.target === inputUsb) setTimeout(function () { fokusUsb(); }, 200); });
+  panggung.addEventListener('click', function (e) { if (e.target.tagName !== 'SELECT' && e.target.tagName !== 'OPTION') fokusUsb(); });
+  window.addEventListener('focus', fokusUsb);
+  setInterval(function () { perbaruiIndikator(); perbaruiDiag(); }, 1000);
+
+  // ---------------------------------------------------------------- kamera (webcam)
+  var timerBaca = null, tokenKamera = 0, kodeKameraTerakhir = '', kameraWaktuLihat = 0, pustakaPromise = null;
+
+  function setKamera(status, teks) {
+    panggung.setAttribute('data-kamera', status);
+    if (teks !== undefined) petunjuk.textContent = teks;
+    diag.kamera = status + (status === 'error' ? ': ' + teks : '');
+    perbaruiDiag();
+  }
+  function muatZXing() {
+    if (window.ZXing) return Promise.resolve();
+    if (pustakaPromise) return pustakaPromise;
+    pustakaPromise = new Promise(function (selesai, gagal) {
+      var s = document.createElement('script'); s.src = ZXING_URL;
+      s.onload = function () { window.ZXing ? selesai() : gagal(new Error('PUSTAKA')); };
+      s.onerror = function () { pustakaPromise = null; gagal(new Error('PUSTAKA')); };
+      document.head.appendChild(s);
+    });
+    return pustakaPromise;
+  }
+  function pesanKamera(e) {
+    var nama = (e && e.name) || '', pesan = (e && e.message) || '';
+    if (pesan === 'PUSTAKA') return 'Pemindai kamera belum bisa dimuat. Periksa koneksi internet, lalu klik Nyalakan Kamera.';
+    if (pesan === 'TANPA_KAMERA_API') return 'Browser ini tidak mengizinkan akses kamera di halaman ini (kamera butuh alamat HTTPS).';
+    if (pesan === 'KEBIJAKAN' || /permissions? policy|feature policy|not allowed in this document/i.test(pesan))
+      return 'Kamera diblokir oleh halaman pembungkus. Buka halaman ini langsung di browser (bukan di dalam bingkai halaman lain).';
+    if (nama === 'NotAllowedError' || nama === 'PermissionDeniedError')
+      return 'Izin kamera ditolak. Klik ikon kamera atau gembok di bilah alamat browser, pilih "Izinkan", lalu klik Nyalakan Kamera.';
+    if (nama === 'NotFoundError' || nama === 'DevicesNotFoundError') return 'Kamera tidak ditemukan. Pastikan webcam terpasang, lalu klik Nyalakan Kamera.';
+    if (nama === 'NotReadableError' || nama === 'TrackStartError') return 'Kamera sedang dipakai aplikasi lain. Tutup aplikasi itu, lalu klik Nyalakan Kamera.';
+    if (nama === 'SecurityError') return 'Kamera diblokir oleh pengaturan keamanan halaman ini.';
+    return 'Kamera tidak bisa dibuka' + (nama ? ' (' + nama + ')' : '') + '. Klik Nyalakan Kamera.';
+  }
+  function dilarangKebijakan() {
+    try { var k = document.permissionsPolicy || document.featurePolicy;
+      return !!(k && typeof k.allowsFeature === 'function' && k.allowsFeature('camera') === false); } catch (e) { return false; }
+  }
+  function bacaPilihan() { try { return localStorage.getItem('kameraPilihan') || ''; } catch (e) { return ''; } }
+  function simpanPilihan(id) { try { if (id) localStorage.setItem('kameraPilihan', id); else localStorage.removeItem('kameraPilihan'); } catch (e) {} }
+  function batasan(deviceId) {
+    var v = { width: { ideal: 1280 }, height: { ideal: 720 } };
+    if (deviceId) v.deviceId = { exact: deviceId }; else v.facingMode = { ideal: 'environment' };
+    return { video: v };
+  }
+  function hentikanKamera() {
+    if (timerBaca) { clearTimeout(timerBaca); timerBaca = null; }
+    if (video.srcObject) { video.srcObject.getTracks().forEach(function (t) { t.stop(); }); video.srcObject = null; }   // lampu kamera harus mati
+  }
+
+  // Kartu yang masih di depan kamera diabaikan sampai dijauhkan sejenak
+  function terimaDariKamera(teks) {
+    var kode = String(teks || '').trim(); if (!kode) return;
+    var sekarang = Date.now();
+    var masihSama = (kode === kodeKameraTerakhir) && (sekarang - kameraWaktuLihat < KAMERA_KARTU_SAMA_MS);
+    kameraWaktuLihat = sekarang;
+    if (masihSama) return;
+    kodeKameraTerakhir = kode;
+    terimaKode(kode);
+  }
+
+  // Frame video digambar ke kanvas sendiri lalu dibaca ZXing (cara ini terbukti andal; mode "continuous" bawaan pustaka tidak)
+  function mulaiBaca(token) {
+    var kanvas = document.createElement('canvas'), ctx = kanvas.getContext('2d', { willReadFrequently: true });
+    var hint = new Map();
+    hint.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, [ZXing.BarcodeFormat.CODE_128]);   // kartu memakai Code128
+    hint.set(ZXing.DecodeHintType.TRY_HARDER, true);
+    var pembaca = new ZXing.MultiFormatReader(); pembaca.setHints(hint);
+    (function putaran() {
+      if (token !== tokenKamera) return;
+      if (!document.hidden && video.readyState >= 2 && video.videoWidth > 0) {
+        var w = Math.min(video.videoWidth, 1280), h = Math.round(video.videoHeight * w / video.videoWidth);
+        if (kanvas.width !== w || kanvas.height !== h) { kanvas.width = w; kanvas.height = h; }
+        ctx.drawImage(video, 0, 0, w, h);
+        try {
+          var bitmap = new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(new ZXing.HTMLCanvasElementLuminanceSource(kanvas)));
+          terimaDariKamera(pembaca.decode(bitmap).getText());
+        } catch (e) { /* tidak ada barcode pada frame ini: wajar */ }
+      }
+      timerBaca = setTimeout(putaran, KAMERA_JEDA_BACA_MS);
+    })();
+  }
+
+  // Daftar kamera: komputer sering punya "kamera" selain webcam (mis. OBS Virtual Camera). Pilihan diingat.
+  function isiDaftarKamera(aliran) {
+    if (!navigator.mediaDevices.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then(function (daftar) {
+      var kamera = daftar.filter(function (d) { return d.kind === 'videoinput'; });
+      var pilih = el('pilihKamera');
+      if (kamera.length < 2) { pilih.hidden = true; return; }
+      var aktifId = ''; try { aktifId = aliran.getVideoTracks()[0].getSettings().deviceId || ''; } catch (e) {}
+      pilih.innerHTML = '';
+      kamera.forEach(function (d, i) {
+        var o = document.createElement('option'); o.value = d.deviceId; o.textContent = d.label || ('Kamera ' + (i + 1));
+        if (d.deviceId === aktifId) o.selected = true; pilih.appendChild(o);
+      });
+      pilih.hidden = false;
+    }).catch(function () {});
+  }
+  el('pilihKamera').addEventListener('change', function () {
+    simpanPilihan(this.value); hentikanKamera(); setKamera('mati', ''); mulaiKamera();
+  });
+
+  function mulaiKamera() {
+    var status = panggung.getAttribute('data-kamera');
+    if (status === 'memuat' || status === 'aktif') return;
+    var token = ++tokenKamera; kodeKameraTerakhir = '';
+    setKamera('memuat', 'Membuka kamera...');
+    var aliran = null;
+    function gagal(e) {
+      if (aliran) aliran.getTracks().forEach(function (t) { t.stop(); });
+      if (token !== tokenKamera) return;
+      hentikanKamera();
+      setKamera('error', pesanKamera(e));
+      diag.kamera = 'error [' + ((e && e.name) || 'Error') + (e && e.message ? ': ' + e.message : '') + ']'; perbaruiDiag();
+      if (window.console) console.warn('[Scan] kamera gagal dibuka:', e);
+    }
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { gagal(new Error('TANPA_KAMERA_API')); return; }
+    if (dilarangKebijakan()) { gagal(new Error('KEBIJAKAN')); return; }
+
+    var janjiPustaka = muatZXing(); janjiPustaka.catch(function () {});   // dimuat paralel; kamera diminta langsung
+    var pilihan = bacaPilihan();
+    navigator.mediaDevices.getUserMedia(batasan(pilihan)).catch(function (e1) {
+      if (pilihan && (e1.name === 'OverconstrainedError' || e1.name === 'NotFoundError')) { simpanPilihan(''); return navigator.mediaDevices.getUserMedia(batasan('')); }
+      throw e1;
+    }).then(function (s) {
+      aliran = s;
+      if (token !== tokenKamera) { s.getTracks().forEach(function (t) { t.stop(); }); aliran = null; return null; }
+      return janjiPustaka;
+    }).then(function () {
+      if (token !== tokenKamera || !aliran) return null;
+      video.srcObject = aliran;
+      return video.play();
+    }).then(function () {
+      if (token !== tokenKamera || !aliran) return;
+      setKamera('aktif', 'Arahkan barcode kartu ke kamera');
+      isiDaftarKamera(aliran); aliran = null;     // sudah dipegang elemen video
+      mulaiBaca(token);
+    }).catch(gagal);
+  }
+  function matikanKamera() { tokenKamera++; hentikanKamera(); setKamera('mati', 'Kamera dimatikan. Klik Nyalakan Kamera untuk memakainya lagi.'); el('pilihKamera').hidden = true; fokusUsb(); }
+
+  el('btnNyala').addEventListener('click', mulaiKamera);
+  el('btnMati').addEventListener('click', matikanKamera);
+  window.addEventListener('pagehide', hentikanKamera);
+
+  // ---------------------------------------------------------------- tes koneksi
+  el('btnPing').addEventListener('click', function () {
+    var hasil = el('hasilPing');
+    if (!sudahDiisi()) { hasil.textContent = '❌ Alamat Apps Script belum diisi di scan.html.'; return; }
+    hasil.textContent = 'Menguji...';
+    var mulai = Date.now();
+    var url = URL_APPS_SCRIPT + (URL_APPS_SCRIPT.indexOf('?') > -1 ? '&' : '?') + 'aksi=ping&kodeRahasia=' + encodeURIComponent(KODE_RAHASIA);
+    fetch(url, { redirect: 'follow' }).then(function (r) { return r.text(); }).then(function (t) {
+      var j = null; try { j = JSON.parse(t); } catch (e) {}
+      if (!j || j.ok !== true) { hasil.textContent = '❌ Terhubung, tetapi jawabannya bukan dari Apps Script ini. Periksa alamat /exec dan akses deployment "Anyone". Pastikan Code.gs terbaru sudah di-deploy sebagai VERSI BARU.'; return; }
+      hasil.textContent = j.kodeRahasiaCocok ? '✅ Koneksi OK (' + (Date.now() - mulai) + ' ms), kode rahasia cocok.'
+                                              : '⚠️ Koneksi OK, tetapi KODE RAHASIA TIDAK COCOK: samakan KODE_RAHASIA di scan.html dengan SCAN_KODE_RAHASIA di Code.gs.';
+    }).catch(function (e) {
+      hasil.textContent = '❌ Gagal terhubung (' + (e && e.message) + '). Periksa alamat /exec, koneksi internet, dan akses deployment "Anyone".';
+    });
+  });
+
+  // ---------------------------------------------------------------- mulai
+  fokusUsb();
+  setKamera('mati', '');
+  setTimeout(mulaiKamera, 300);   // langsung menyalakan kamera; izin yang sudah diberikan diingat browser
+})();
+</script>
+</body>
+</html>
